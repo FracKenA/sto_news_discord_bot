@@ -276,70 +276,41 @@ func ProcessChannelNews(b *types.Bot, channelID string) {
 		log.Errorf("Failed to get platforms for channel %s: %v", channelID, err)
 		return
 	}
-
 	if len(platforms) == 0 {
 		log.Debugf("Channel %s not registered", channelID)
 		return
 	}
 
-	// Fetch news for different tags
-	tags := []string{"star-trek-online", "patch-notes"}
+	// Fetch all news at once (no tag or platform filtering)
+	newsItems, err := FetchNews(b, "", b.Config.PollCount, DefaultFetchOptions())
+	if err != nil {
+		log.Errorf("Failed to fetch news: %v", err)
+		return
+	}
 
-	for _, tag := range tags {
-		newsItems, err := FetchNews(b, tag, b.Config.PollCount, DefaultFetchOptions())
+	// Write all news to DB (cache)
+	if err := database.CacheNews(b, newsItems); err != nil {
+		log.Errorf("Failed to cache news items: %v", err)
+	}
+
+	// Post all unposted news
+	for _, newsItem := range newsItems {
+		posted, err := database.IsNewsPosted(b, newsItem.ID, channelID)
 		if err != nil {
-			log.Errorf("Failed to fetch news for tag %s: %v", tag, err)
+			log.Errorf("Failed to check if news %d is posted: %v", newsItem.ID, err)
 			continue
 		}
-
-		// Filter by platforms
-		filteredNews := filterNewsByPlatforms(newsItems, platforms)
-
-		// Process each news item
-		for _, newsItem := range filteredNews {
-			// Check if already posted first (most important check - posted_news is source of truth)
-			posted, err := database.IsNewsPosted(b, newsItem.ID, channelID)
-			if err != nil {
-				log.Errorf("Failed to check if news %d is posted: %v", newsItem.ID, err)
-				continue
-			}
-
-			if posted {
-				log.Debugf("News item %d already posted to channel %s", newsItem.ID, channelID)
-				continue
-			}
-
-			// Since posted_news is the source of truth, if we reach here, the item hasn't been posted
-			// Apply freshness check to determine if we should post it now
-			if !IsNewsFresh(b, newsItem) {
-				log.Debugf("News item %d is not fresh, skipping", newsItem.ID)
-				continue
-			}
-
-			// Check recent messages for duplicates
-			if IsDuplicateInRecentMessages(b, channelID, newsItem) {
-				log.Debugf("News item %d appears to be duplicate in recent messages", newsItem.ID)
-				continue
-			}
-
-			// Post the news
-			if err := PostNewsToChannel(b, channelID, newsItem); err != nil {
-				log.Errorf("Failed to post news %d to channel %s: %v", newsItem.ID, channelID, err)
-				continue
-			}
-
-			// Mark as posted
-			if err := database.MarkNewsAsPosted(b, newsItem.ID, channelID); err != nil {
-				log.Errorf("Failed to mark news %d as posted: %v", newsItem.ID, err)
-			}
-
-			log.Infof("Posted news item %d ('%s') to channel %s", newsItem.ID, newsItem.Title, channelID)
+		if posted {
+			continue
 		}
-
-		// Cache the news items after processing
-		if err := database.CacheNews(b, newsItems); err != nil {
-			log.Errorf("Failed to cache news items: %v", err)
+		if err := PostNewsToChannel(b, channelID, newsItem); err != nil {
+			log.Errorf("Failed to post news %d to channel %s: %v", newsItem.ID, channelID, err)
+			continue
 		}
+		if err := database.MarkNewsAsPosted(b, newsItem.ID, channelID); err != nil {
+			log.Errorf("Failed to mark news %d as posted: %v", newsItem.ID, err)
+		}
+		log.Infof("Posted news item %d ('%s') to channel %s", newsItem.ID, newsItem.Title, channelID)
 	}
 }
 
