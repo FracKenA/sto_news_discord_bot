@@ -15,6 +15,7 @@ channels-beta.txt
 
 # Environment files
 .env
+.env-beta
 .env.local
 
 # Data directory
@@ -28,7 +29,7 @@ posted_news_ids.txt
 *.swo
 /bin/*
 !/bin/.gitkeep
-
+!/data/.gitkeep
 
 # OS files
 .DS_Store

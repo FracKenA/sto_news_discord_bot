@@ -1,0 +1,31 @@
+services:
+  # Go version (default)
+  stobot-go:
+    image: stobot:latest
+
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep stobot || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    env_file: 
+      - .env
+
+  # Go version (beta)
+  stobot-go-beta:
+    image: stobot:latest
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep stobot || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    env_file: 
+      - .env-beta
