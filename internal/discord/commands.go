@@ -315,8 +315,6 @@ func HandleCommand(b *types.Bot, s *discordgo.Session, i *discordgo.InteractionC
 func handleHelp(b *types.Bot, s *discordgo.Session, i *discordgo.InteractionCreate) {
 	helpText := "**Star Trek Online News Bot**\n\n" +
 		"**📰 Basic Commands:**\n" +
-		"• `/stobot_register [platforms]` - Register this channel for STO news updates\n" +
-		"• `/stobot_unregister` - Unregister this channel from news updates\n" +
 		"• `/stobot_news [tag] [platforms] [weeks]` - Get recent STO news\n" +
 		"• `/stobot_status` - Show bot status and settings\n" +
 		"• `/stobot_game_status` - Check Star Trek Online server status\n\n" +
@@ -337,6 +335,8 @@ func handleHelp(b *types.Bot, s *discordgo.Session, i *discordgo.InteractionCrea
 		"• `/stobot_popular_this_week` - Most engaged articles\n" +
 		"• `/stobot_tag_trends [period]` - Trending tags over time\n\n" +
 		"**⚙️ Admin Commands:**\n" +
+		"• `/stobot_register [platforms]` - Register this channel for STO news updates\n" +
+		"• `/stobot_unregister` - Unregister this channel from news updates\n" +
 		"• `/stobot_engagement_report` - Detailed usage statistics (Admin only)\n\n" +
 		"**Platforms:** pc, xbox, ps (comma-separated)\n" +
 		"**News Tags:** star-trek-online, patch-notes, events, dev-blogs\n\n" +

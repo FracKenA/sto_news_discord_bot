@@ -295,7 +295,11 @@ func RemoveChannel(b *types.Bot, channelID string) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %v", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil {
+			log.Printf("Warning: failed to rollback transaction: %v", rollbackErr)
+		}
+	}()
 
 	// Remove from channels
 	_, err = tx.Exec("DELETE FROM channels WHERE id = ?", channelID)
@@ -427,7 +431,11 @@ func MarkMultipleNewsAsPosted(b *types.Bot, newsItems []types.NewsItem, channelI
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %v", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil {
+			log.Printf("Warning: failed to rollback transaction: %v", rollbackErr)
+		}
+	}()
 
 	query := `INSERT OR IGNORE INTO posted_news (news_id, channel_id) VALUES (?, ?)`
 
@@ -504,7 +512,11 @@ func CacheNewsWithOptions(b *types.Bot, news []types.NewsItem, options DatabaseO
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %v", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil {
+			log.Printf("Warning: failed to rollback transaction: %v", rollbackErr)
+		}
+	}()
 
 	query := `INSERT OR REPLACE INTO news_cache 
 			  (id, title, summary, content, tags, platforms, updated_at, thumbnail_url, fetched_at) 
@@ -565,7 +577,11 @@ func ImportChannelsFromFile(b *types.Bot, filePath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %v", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil {
+			log.Printf("Warning: failed to rollback transaction: %v", rollbackErr)
+		}
+	}()
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())

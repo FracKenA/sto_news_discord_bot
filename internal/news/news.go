@@ -297,12 +297,7 @@ func ProcessChannelNews(b *types.Bot, channelID string) {
 
 		// Process each news item
 		for _, newsItem := range filteredNews {
-			if !IsNewsFresh(b, newsItem) {
-				log.Debugf("News item %d is not fresh, skipping", newsItem.ID)
-				continue
-			}
-
-			// Check if already posted
+			// Check if already posted first (most important check - posted_news is source of truth)
 			posted, err := database.IsNewsPosted(b, newsItem.ID, channelID)
 			if err != nil {
 				log.Errorf("Failed to check if news %d is posted: %v", newsItem.ID, err)
@@ -311,6 +306,13 @@ func ProcessChannelNews(b *types.Bot, channelID string) {
 
 			if posted {
 				log.Debugf("News item %d already posted to channel %s", newsItem.ID, channelID)
+				continue
+			}
+
+			// Since posted_news is the source of truth, if we reach here, the item hasn't been posted
+			// Apply freshness check to determine if we should post it now
+			if !IsNewsFresh(b, newsItem) {
+				log.Debugf("News item %d is not fresh, skipping", newsItem.ID)
 				continue
 			}
 
@@ -334,7 +336,7 @@ func ProcessChannelNews(b *types.Bot, channelID string) {
 			log.Infof("Posted news item %d ('%s') to channel %s", newsItem.ID, newsItem.Title, channelID)
 		}
 
-		// Cache the news items
+		// Cache the news items after processing
 		if err := database.CacheNews(b, newsItems); err != nil {
 			log.Errorf("Failed to cache news items: %v", err)
 		}
@@ -345,6 +347,10 @@ func ProcessChannelNews(b *types.Bot, channelID string) {
 func IsDuplicateInRecentMessages(b *types.Bot, channelID string, newsItem types.NewsItem) bool {
 	messages, err := b.Session.ChannelMessages(channelID, b.Config.MsgCount, "", "", "")
 	if err != nil {
+		if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "Missing Access") {
+			log.Warnf("[IsDuplicateInRecentMessages] Missing access to read messages in channel %s. Skipping duplicate check.", channelID)
+			return false // Don't block posting if we can't check
+		}
 		log.Errorf("Failed to get recent messages for channel %s: %v", channelID, err)
 		return false
 	}

@@ -248,7 +248,9 @@ func markAllPosted(cmd *cobra.Command, args []string) {
 // main is the entry point for the STOBot application.
 func main() {
 	// Load environment variables
-	godotenv.Load()
+	if err := godotenv.Load(); err != nil {
+		log.Debug("No .env file found or error loading it: ", err)
+	}
 
 	var rootCmd = &cobra.Command{
 		Use:   "stobot",
@@ -365,6 +367,10 @@ func runBot(cmd *cobra.Command, args []string) {
 	defer dg.Close()
 
 	log.Info("Bot is now running. Press CTRL-C to exit.")
+
+	// --- CATCH UP ON UNPOSTED NEWS AT STARTUP ---
+	go news.CatchUpUnpostedNews(bot, 7) // 7 days catch-up window
+	// --------------------------------------------
 
 	// Start news polling
 	go news.NewsPoller(bot)

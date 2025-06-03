@@ -116,7 +116,9 @@ func TestFetchNewsFromAPI(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		}
 	}))
 	defer server.Close()
 
@@ -153,7 +155,10 @@ func TestFetchNewsError(t *testing.T) {
 	// Create a mock server that returns an error
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("Internal Server Error"))
+		if _, err := w.Write([]byte("Internal Server Error")); err != nil {
+			// Log the error but don't fail the test since this is just a mock
+			t.Logf("Failed to write error response: %v", err)
+		}
 	}))
 	defer server.Close()
 
