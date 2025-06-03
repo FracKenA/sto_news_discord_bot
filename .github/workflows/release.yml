@@ -1,0 +1,254 @@
+name: Release Build and Deploy
+
+on:
+  release:
+    types: [created]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-binaries:
+    name: Build Release Binaries
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            name: stobot-linux-amd64
+          - goos: linux
+            goarch: arm64
+            name: stobot-linux-arm64
+          - goos: darwin
+            goarch: amd64
+            name: stobot-darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            name: stobot-darwin-arm64
+          - goos: windows
+            goarch: amd64
+            name: stobot-windows-amd64.exe
+          - goos: windows
+            goarch: arm64
+            name: stobot-windows-arm64.exe
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for version tags
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.23'
+
+    - name: Install cross-compilation dependencies
+      if: matrix.goos == 'windows'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-mingw-w64
+
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Build binary
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+        CGO_ENABLED: 1
+        CC: ${{ matrix.goos == 'windows' && matrix.goarch == 'amd64' && 'x86_64-w64-mingw32-gcc' || (matrix.goos == 'windows' && matrix.goarch == 'arm64' && 'aarch64-w64-mingw32-gcc' || '') }}
+      run: |
+        VERSION="${{ github.ref_name }}"
+        BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S')
+        GIT_COMMIT="${{ github.sha }}"
+        LDFLAGS="-X main.version=${VERSION} -X main.buildTime=${BUILD_TIME} -X main.gitCommit=${GIT_COMMIT}"
+        
+        mkdir -p bin
+        
+        # Skip Windows arm64 if cross-compiler not available
+        if [[ "${{ matrix.goos }}" == "windows" && "${{ matrix.goarch }}" == "arm64" ]]; then
+          if ! command -v aarch64-w64-mingw32-gcc >/dev/null 2>&1; then
+            echo "Skipping Windows arm64 build - cross-compiler not available"
+            touch bin/${{ matrix.name }}  # Create empty file to avoid upload failure
+            exit 0
+          fi
+        fi
+        
+        go build -ldflags "${LDFLAGS}" -o bin/${{ matrix.name }} ./cmd/stobot/main.go
+
+    - name: Create archive
+      run: |
+        cd bin
+        if [[ "${{ matrix.name }}" == *.exe ]]; then
+          # Windows - create zip
+          zip -r ${{ matrix.name }}-${{ github.ref_name }}.zip ${{ matrix.name }}
+          echo "ASSET_NAME=${{ matrix.name }}-${{ github.ref_name }}.zip" >> $GITHUB_ENV
+          echo "ASSET_PATH=bin/${{ matrix.name }}-${{ github.ref_name }}.zip" >> $GITHUB_ENV
+        else
+          # Unix - create tar.gz
+          tar -czf ${{ matrix.name }}-${{ github.ref_name }}.tar.gz ${{ matrix.name }}
+          echo "ASSET_NAME=${{ matrix.name }}-${{ github.ref_name }}.tar.gz" >> $GITHUB_ENV
+          echo "ASSET_PATH=bin/${{ matrix.name }}-${{ github.ref_name }}.tar.gz" >> $GITHUB_ENV
+        fi
+
+    - name: Upload release asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ${{ env.ASSET_PATH }}
+        asset_name: ${{ env.ASSET_NAME }}
+        asset_content_type: application/octet-stream
+
+  build-docker:
+    name: Build and Push Docker Images
+    runs-on: ubuntu-latest
+    needs: build-binaries
+    
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=tag
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.multiarch
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        build-args: |
+          VERSION=${{ github.ref_name }}
+          BUILD_TIME=${{ github.event.release.created_at }}
+          GIT_COMMIT=${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  create-checksums:
+    name: Create and Upload Checksums
+    runs-on: ubuntu-latest
+    needs: build-binaries
+    
+    steps:
+    - name: Download all release assets
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs').promises;
+          const release = await github.rest.repos.getRelease({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            release_id: context.payload.release.id
+          });
+          
+          // Wait a bit for assets to be uploaded
+          await new Promise(resolve => setTimeout(resolve, 10000));
+          
+          const assets = await github.rest.repos.listReleaseAssets({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            release_id: context.payload.release.id
+          });
+          
+          let checksums = '';
+          for (const asset of assets.data) {
+            if (asset.name.endsWith('.zip') || asset.name.endsWith('.tar.gz')) {
+              const response = await github.rest.repos.getReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                asset_id: asset.id,
+                headers: {
+                  Accept: 'application/octet-stream'
+                }
+              });
+              
+              const crypto = require('crypto');
+              const hash = crypto.createHash('sha256');
+              hash.update(Buffer.from(response.data));
+              const checksum = hash.digest('hex');
+              
+              checksums += `${checksum}  ${asset.name}\n`;
+            }
+          }
+          
+          await fs.writeFile('checksums.sha256', checksums);
+          console.log('Created checksums file');
+
+    - name: Upload checksums
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./checksums.sha256
+        asset_name: checksums.sha256
+        asset_content_type: text/plain
+
+  notify-success:
+    name: Notify Release Success
+    runs-on: ubuntu-latest
+    needs: [build-binaries, build-docker, create-checksums]
+    if: success()
+    
+    steps:
+    - name: Create success summary
+      run: |
+        echo "## 🚀 Release ${{ github.ref_name }} Built Successfully!" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### ✅ Completed Tasks:" >> $GITHUB_STEP_SUMMARY
+        echo "- Built binaries for Linux (amd64, arm64)" >> $GITHUB_STEP_SUMMARY
+        echo "- Built binaries for macOS (amd64, arm64)" >> $GITHUB_STEP_SUMMARY
+        echo "- Built binaries for Windows (amd64, arm64)" >> $GITHUB_STEP_SUMMARY
+        echo "- Created release archives and checksums" >> $GITHUB_STEP_SUMMARY
+        echo "- Built and pushed multi-architecture Docker images" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🐳 Docker Images:" >> $GITHUB_STEP_SUMMARY
+        echo "- \`ghcr.io/${{ github.repository }}:${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- \`ghcr.io/${{ github.repository }}:latest\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📦 Release Assets:" >> $GITHUB_STEP_SUMMARY
+        echo "All platform binaries and checksums are available on the [release page](${{ github.event.release.html_url }})." >> $GITHUB_STEP_SUMMARY

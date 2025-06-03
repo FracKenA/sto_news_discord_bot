@@ -1,0 +1,23 @@
+services:
+  # Go version (default)
+  stobot-go:
+    image: stobot:latest
+    environment:
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - POLL_PERIOD=${POLL_PERIOD:-600}
+      - POLL_COUNT=${POLL_COUNT:-20}
+      - FRESH_SECONDS=${FRESH_SECONDS:-600}
+      - MSG_COUNT=${MSG_COUNT:-10}
+      - DATABASE_PATH=${DATABASE_PATH:-/data/stobot.db}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep stobot || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    env_file: 
+      - .env
