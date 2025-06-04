@@ -72,6 +72,7 @@ docker-compose --profile rust up -d stobot-rust
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DISCORD_TOKEN` | *required* | Discord bot token |
+| `STOBOT_ENVIRONMENT` | `PROD` | Bot environment (DEV or PROD) for channel filtering |
 | `POLL_PERIOD` | `600` | Seconds between news checks |
 | `POLL_COUNT` | `20` | Number of news items to fetch |
 | `FRESH_SECONDS` | `600` | Max age of news to post (seconds) |
@@ -90,9 +91,42 @@ stobot --poll-period 300 --fresh-seconds 1200
 
 The bot uses SQLite with the following tables:
 
-- **channels**: Registered Discord channels and their platform preferences
+- **channels**: Registered Discord channels with platform preferences and environment settings (DEV/PROD)
 - **posted_news**: Track which news items have been posted to prevent duplicates
 - **news_cache**: Cache fetched news for performance and offline access
+
+### Channel Environment Support
+
+Channels can be configured for different environments:
+- **PROD** (default): Production environment for live news posting
+- **DEV**: Development environment for testing
+
+The bot reads the `STOBOT_ENVIRONMENT` environment variable to determine which channels to process:
+- When `STOBOT_ENVIRONMENT=DEV`, the bot only processes channels with environment `DEV`
+- When `STOBOT_ENVIRONMENT=PROD`, the bot only processes channels with environment `PROD`
+- When `STOBOT_ENVIRONMENT` is not set, the bot defaults to `PROD` environment
+- If no environment is configured, the bot processes all channels (backwards compatibility)
+
+This allows you to run separate bot instances for development and production, each posting only to their respective channels.
+
+Use the database functions `GetChannelEnvironment()`, `UpdateChannelEnvironment()`, and `GetChannelsByEnvironment()` to manage channel environments programmatically.
+
+### Environment Management Examples
+
+```go
+// Add a channel with DEV environment
+err := database.AddChannelWithEnvironment(bot, "123456789", "DEV")
+
+// Get channel environment
+env, err := database.GetChannelEnvironment(bot, "123456789") // Returns "DEV"
+
+// Update channel environment
+err := database.UpdateChannelEnvironment(bot, "123456789", "PROD")
+
+// Get all channels by environment
+devChannels, err := database.GetChannelsByEnvironment(bot, "DEV")
+prodChannels, err := database.GetChannelsByEnvironment(bot, "PROD")
+```
 
 ## Development
 

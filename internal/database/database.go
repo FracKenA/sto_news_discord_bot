@@ -198,6 +198,20 @@ func migrateDatabase(db *sql.DB) error {
 		log.Info("Successfully migrated posted_news table")
 	}
 
+	// Check if environment column exists in channels table, if not add it
+	var environmentColumnExists bool
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('channels') WHERE name='environment'`).Scan(&environmentColumnExists)
+	if err != nil {
+		return fmt.Errorf("failed to check for environment column: %v", err)
+	}
+
+	if !environmentColumnExists {
+		log.Info("Adding environment column to channels table")
+		if _, err := db.Exec(`ALTER TABLE channels ADD COLUMN environment TEXT NOT NULL DEFAULT 'PROD' CHECK (environment IN ('DEV', 'PROD'))`); err != nil {
+			return fmt.Errorf("failed to add environment column: %v", err)
+		}
+	}
+
 	return nil
 }
 
@@ -206,6 +220,7 @@ func createTables(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS channels (
 			id TEXT PRIMARY KEY,
 			platforms TEXT NOT NULL DEFAULT 'pc,xbox,ps',
+			environment TEXT NOT NULL DEFAULT 'PROD' CHECK (environment IN ('DEV', 'PROD')),
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -257,8 +272,8 @@ func AddChannel(b *types.Bot, channelID string) error {
 	isNewChannel := (err == sql.ErrNoRows)
 
 	// Register the channel
-	query := `INSERT OR REPLACE INTO channels (id, platforms, updated_at) 
-			  VALUES (?, 'pc,xbox,ps', CURRENT_TIMESTAMP)`
+	query := `INSERT OR REPLACE INTO channels (id, platforms, environment, updated_at) 
+			  VALUES (?, 'pc,xbox,ps', 'PROD', CURRENT_TIMESTAMP)`
 
 	_, err = b.DB.Exec(query, channelID)
 	if err != nil {
@@ -268,6 +283,52 @@ func AddChannel(b *types.Bot, channelID string) error {
 	// If this is a new channel, mark all existing cached news as posted to prevent spam
 	if isNewChannel {
 		log.Infof("New channel registered: %s, marking existing news as posted", channelID)
+
+		// Get all cached news items
+		allNews, err := GetAllCachedNews(b)
+		if err != nil {
+			log.Errorf("Failed to get cached news for new channel %s: %v", channelID, err)
+			// Don't fail the registration, just log the error
+		} else if len(allNews) > 0 {
+			// Mark all existing news as posted to this new channel using bulk options
+			err = MarkMultipleNewsAsPosted(b, allNews, []string{channelID}, BulkDatabaseOptions())
+			if err != nil {
+				log.Errorf("Failed to mark existing news as posted for new channel %s: %v", channelID, err)
+				// Don't fail the registration, just log the error
+			} else {
+				log.Infof("Marked %d existing news items as posted for new channel %s", len(allNews), channelID)
+			}
+		}
+	}
+
+	return nil
+}
+
+// AddChannelWithEnvironment registers a new channel in the database with specified environment.
+func AddChannelWithEnvironment(b *types.Bot, channelID string, environment string) error {
+	// Validate environment value
+	if environment != "DEV" && environment != "PROD" {
+		return fmt.Errorf("invalid environment value: %s. Must be 'DEV' or 'PROD'", environment)
+	}
+
+	// Check if this is a new channel registration
+	var exists int
+	checkQuery := `SELECT 1 FROM channels WHERE id = ?`
+	err := b.DB.QueryRow(checkQuery, channelID).Scan(&exists)
+	isNewChannel := (err == sql.ErrNoRows)
+
+	// Register the channel
+	query := `INSERT OR REPLACE INTO channels (id, platforms, environment, updated_at) 
+			  VALUES (?, 'pc,xbox,ps', ?, CURRENT_TIMESTAMP)`
+
+	_, err = b.DB.Exec(query, channelID, environment)
+	if err != nil {
+		return fmt.Errorf("failed to add channel: %v", err)
+	}
+
+	// If this is a new channel, mark all existing cached news as posted to prevent spam
+	if isNewChannel {
+		log.Infof("New channel registered: %s (environment: %s), marking existing news as posted", channelID, environment)
 
 		// Get all cached news items
 		allNews, err := GetAllCachedNews(b)
@@ -366,6 +427,76 @@ func UpdateChannelPlatforms(b *types.Bot, channelID string, platforms []string) 
 	}
 
 	return nil
+}
+
+// GetChannelEnvironment retrieves the environment associated with a channel.
+func GetChannelEnvironment(b *types.Bot, channelID string) (string, error) {
+	var environment string
+	query := "SELECT environment FROM channels WHERE id = ?"
+
+	err := b.DB.QueryRow(query, channelID).Scan(&environment)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "PROD", nil // Default to PROD if channel not found
+		}
+		return "", fmt.Errorf("failed to get channel environment: %v", err)
+	}
+
+	return environment, nil
+}
+
+// UpdateChannelEnvironment updates the environment associated with a channel.
+func UpdateChannelEnvironment(b *types.Bot, channelID string, environment string) error {
+	// Validate environment value
+	if environment != "DEV" && environment != "PROD" {
+		return fmt.Errorf("invalid environment value: %s. Must be 'DEV' or 'PROD'", environment)
+	}
+
+	query := `UPDATE channels SET environment = ?, updated_at = CURRENT_TIMESTAMP 
+			  WHERE id = ?`
+
+	result, err := b.DB.Exec(query, environment, channelID)
+	if err != nil {
+		return fmt.Errorf("failed to update channel environment: %v", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %v", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("channel %s not found", channelID)
+	}
+
+	return nil
+}
+
+// GetChannelsByEnvironment retrieves all channels for a specific environment.
+func GetChannelsByEnvironment(b *types.Bot, environment string) ([]string, error) {
+	// Validate environment value
+	if environment != "DEV" && environment != "PROD" {
+		return nil, fmt.Errorf("invalid environment value: %s. Must be 'DEV' or 'PROD'", environment)
+	}
+
+	query := "SELECT id FROM channels WHERE environment = ?"
+
+	rows, err := b.DB.Query(query, environment)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query channels by environment: %v", err)
+	}
+	defer rows.Close()
+
+	var channels []string
+	for rows.Next() {
+		var channelID string
+		if err := rows.Scan(&channelID); err != nil {
+			return nil, fmt.Errorf("failed to scan channel: %v", err)
+		}
+		channels = append(channels, channelID)
+	}
+
+	return channels, nil
 }
 
 // IsNewsPosted checks if a news item has been posted to a specific channel.
@@ -641,8 +772,8 @@ func ImportChannelsFromFile(b *types.Bot, filePath string) error {
 		}
 
 		// Insert channel
-		_, err = tx.Exec(`INSERT INTO channels (id, platforms, created_at, updated_at) 
-						  VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+		_, err = tx.Exec(`INSERT INTO channels (id, platforms, environment, created_at, updated_at) 
+						  VALUES (?, ?, 'PROD', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
 			channelID, platformsStr)
 		if err != nil {
 			return fmt.Errorf("failed to insert channel %s: %v", channelID, err)

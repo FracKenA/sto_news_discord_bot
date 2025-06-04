@@ -97,10 +97,22 @@ func NewsPoller(b *types.Bot) {
 	log.Info("News poller started")
 
 	for range ticker.C {
-		channels, err := database.GetRegisteredChannels(b)
-		if err != nil {
-			log.Errorf("Failed to get registered channels: %v", err)
-			continue
+		// Only get channels that match the current environment
+		var channels []string
+		var err error
+		if b.Config.Environment != "" {
+			channels, err = database.GetChannelsByEnvironment(b, b.Config.Environment)
+			if err != nil {
+				log.Errorf("Failed to get channels for environment %s: %v", b.Config.Environment, err)
+				continue
+			}
+		} else {
+			// If no environment is set, get all channels (backwards compatibility)
+			channels, err = database.GetRegisteredChannels(b)
+			if err != nil {
+				log.Errorf("Failed to get registered channels: %v", err)
+				continue
+			}
 		}
 
 		if len(channels) == 0 {
@@ -271,6 +283,19 @@ func IsNewsFresh(b *types.Bot, newsItem types.NewsItem) bool {
 
 // ProcessChannelNews processes news for a channel.
 func ProcessChannelNews(b *types.Bot, channelID string) {
+	// Check if this channel matches the bot's environment
+	if b.Config.Environment != "" {
+		channelEnv, err := database.GetChannelEnvironment(b, channelID)
+		if err != nil {
+			log.Errorf("Failed to get environment for channel %s: %v", channelID, err)
+			return
+		}
+		if channelEnv != b.Config.Environment {
+			log.Debugf("Skipping channel %s (environment %s, bot environment %s)", channelID, channelEnv, b.Config.Environment)
+			return
+		}
+	}
+
 	platforms, err := database.GetChannelPlatforms(b, channelID)
 	if err != nil {
 		log.Errorf("Failed to get platforms for channel %s: %v", channelID, err)

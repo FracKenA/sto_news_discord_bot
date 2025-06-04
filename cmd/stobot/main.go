@@ -176,7 +176,14 @@ func listChannels(cmd *cobra.Command, args []string) {
 			log.Errorf("Failed to get platforms for channel %s: %v", channelID, err)
 			continue
 		}
-		log.Infof("  Channel %s: platforms %v", channelID, platforms)
+
+		environment, err := database.GetChannelEnvironment(bot, channelID)
+		if err != nil {
+			log.Errorf("Failed to get environment for channel %s: %v", channelID, err)
+			continue
+		}
+
+		log.Infof("  Channel %s: platforms %v, environment %s", channelID, platforms, environment)
 	}
 }
 
@@ -324,10 +331,18 @@ func runBot(cmd *cobra.Command, args []string) {
 	config.MsgCount, _ = cmd.Flags().GetInt("msg-count")
 	config.ChannelsPath, _ = cmd.Flags().GetString("channels-path")
 	config.DatabasePath, _ = cmd.Flags().GetString("database-path")
+	config.Environment = getEnvString("STOBOT_ENVIRONMENT", "PROD") // Default to PROD if not set
 
 	if config.DiscordToken == "" {
 		log.Fatal("Discord token is required")
 	}
+
+	// Validate config
+	if err := config.Validate(); err != nil {
+		log.Fatalf("Configuration validation failed: %v", err)
+	}
+
+	log.Infof("Bot starting in %s environment", config.Environment)
 
 	// Initialize logger
 	log.SetFormatter(&log.JSONFormatter{})

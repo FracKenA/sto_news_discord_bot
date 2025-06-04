@@ -10,10 +10,22 @@ import (
 
 // CatchUpUnpostedNews posts any unposted news items from the last N days to all registered channels.
 func CatchUpUnpostedNews(b *types.Bot, days int) {
-	channels, err := database.GetRegisteredChannels(b)
-	if err != nil {
-		log.Errorf("[catchup] Failed to get registered channels: %v", err)
-		return
+	// Only get channels that match the current environment
+	var channels []string
+	var err error
+	if b.Config.Environment != "" {
+		channels, err = database.GetChannelsByEnvironment(b, b.Config.Environment)
+		if err != nil {
+			log.Errorf("[catchup] Failed to get channels for environment %s: %v", b.Config.Environment, err)
+			return
+		}
+	} else {
+		// If no environment is set, get all channels (backwards compatibility)
+		channels, err = database.GetRegisteredChannels(b)
+		if err != nil {
+			log.Errorf("[catchup] Failed to get registered channels: %v", err)
+			return
+		}
 	}
 	if len(channels) == 0 {
 		log.Info("[catchup] No registered channels found, skipping catch-up.")

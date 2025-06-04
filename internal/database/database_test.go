@@ -564,3 +564,118 @@ func TestSearchNewsContent(t *testing.T) {
 		t.Errorf("Expected 1 result for case-insensitive 'THOLIAN', got %d", len(results))
 	}
 }
+
+func TestChannelEnvironmentOperations(t *testing.T) {
+	// Setup test database
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+	db, err := InitDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer db.Close()
+
+	bot := &types.Bot{DB: db}
+	channelID := "123456789"
+
+	// Test adding channel with default environment
+	err = AddChannel(bot, channelID)
+	if err != nil {
+		t.Fatalf("Failed to add channel: %v", err)
+	}
+
+	// Test getting environment (should default to PROD)
+	env, err := GetChannelEnvironment(bot, channelID)
+	if err != nil {
+		t.Fatalf("Failed to get channel environment: %v", err)
+	}
+	if env != "PROD" {
+		t.Errorf("Expected default environment 'PROD', got '%s'", env)
+	}
+
+	// Test updating environment to DEV
+	err = UpdateChannelEnvironment(bot, channelID, "DEV")
+	if err != nil {
+		t.Fatalf("Failed to update channel environment: %v", err)
+	}
+
+	// Verify environment was updated
+	env, err = GetChannelEnvironment(bot, channelID)
+	if err != nil {
+		t.Fatalf("Failed to get updated channel environment: %v", err)
+	}
+	if env != "DEV" {
+		t.Errorf("Expected environment 'DEV', got '%s'", env)
+	}
+
+	// Test updating back to PROD
+	err = UpdateChannelEnvironment(bot, channelID, "PROD")
+	if err != nil {
+		t.Fatalf("Failed to update channel environment back to PROD: %v", err)
+	}
+
+	// Verify environment was updated
+	env, err = GetChannelEnvironment(bot, channelID)
+	if err != nil {
+		t.Fatalf("Failed to get channel environment after update: %v", err)
+	}
+	if env != "PROD" {
+		t.Errorf("Expected environment 'PROD', got '%s'", env)
+	}
+
+	// Test invalid environment value
+	err = UpdateChannelEnvironment(bot, channelID, "INVALID")
+	if err == nil {
+		t.Error("Expected error for invalid environment value, got nil")
+	}
+
+	// Test updating non-existent channel
+	err = UpdateChannelEnvironment(bot, "nonexistent", "DEV")
+	if err == nil {
+		t.Error("Expected error for non-existent channel, got nil")
+	}
+
+	// Test adding channel with specific environment
+	channelID2 := "987654321"
+	err = AddChannelWithEnvironment(bot, channelID2, "DEV")
+	if err != nil {
+		t.Fatalf("Failed to add channel with environment: %v", err)
+	}
+
+	env, err = GetChannelEnvironment(bot, channelID2)
+	if err != nil {
+		t.Fatalf("Failed to get environment for new channel: %v", err)
+	}
+	if env != "DEV" {
+		t.Errorf("Expected environment 'DEV' for new channel, got '%s'", env)
+	}
+
+	// Test getting channels by environment
+	prodChannels, err := GetChannelsByEnvironment(bot, "PROD")
+	if err != nil {
+		t.Fatalf("Failed to get PROD channels: %v", err)
+	}
+	if len(prodChannels) != 1 || prodChannels[0] != channelID {
+		t.Errorf("Expected 1 PROD channel (%s), got %v", channelID, prodChannels)
+	}
+
+	devChannels, err := GetChannelsByEnvironment(bot, "DEV")
+	if err != nil {
+		t.Fatalf("Failed to get DEV channels: %v", err)
+	}
+	if len(devChannels) != 1 || devChannels[0] != channelID2 {
+		t.Errorf("Expected 1 DEV channel (%s), got %v", channelID2, devChannels)
+	}
+
+	// Test invalid environment for GetChannelsByEnvironment
+	_, err = GetChannelsByEnvironment(bot, "INVALID")
+	if err == nil {
+		t.Error("Expected error for invalid environment in GetChannelsByEnvironment, got nil")
+	}
+
+	// Test invalid environment for AddChannelWithEnvironment
+	err = AddChannelWithEnvironment(bot, "999999999", "INVALID")
+	if err == nil {
+		t.Error("Expected error for invalid environment in AddChannelWithEnvironment, got nil")
+	}
+}

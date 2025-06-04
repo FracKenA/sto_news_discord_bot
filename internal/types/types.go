@@ -27,6 +27,7 @@ import (
 //	    MsgCount:     10,
 //	    ChannelsPath: "/data/channels.txt",
 //	    DatabasePath: "/data/stobot.db",
+//	    Environment:  "DEV",
 //	}
 //	if err := config.Validate(); err != nil {
 //	    log.Fatal(err)
@@ -39,6 +40,7 @@ type Config struct {
 	MsgCount     int    // MsgCount is the number of messages to process in each operation.
 	ChannelsPath string // ChannelsPath is the path to the file containing channel configurations.
 	DatabasePath string // DatabasePath is the path to the SQLite database file.
+	Environment  string // Environment is the current environment (DEV or PROD) for filtering channels.
 }
 
 // Validate checks if the Config is valid. Returns an error if any required field is missing or invalid.
@@ -67,6 +69,9 @@ func (c *Config) Validate() error {
 	}
 	if c.DatabasePath == "" {
 		return errors.New("database path is required")
+	}
+	if c.Environment != "" && c.Environment != "DEV" && c.Environment != "PROD" {
+		return errors.New("environment must be 'DEV' or 'PROD'")
 	}
 	return nil
 }

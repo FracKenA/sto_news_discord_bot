@@ -30,6 +30,7 @@ func CreateTestBot(t *testing.T) *types.Bot {
 		CREATE TABLE IF NOT EXISTS channels (
 			id TEXT PRIMARY KEY,
 			platforms TEXT NOT NULL DEFAULT 'pc,xbox,ps',
+			environment TEXT NOT NULL DEFAULT 'PROD' CHECK (environment IN ('DEV', 'PROD')),
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);

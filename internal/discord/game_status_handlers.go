@@ -41,7 +41,7 @@ func handleGameStatus(b *types.Bot, s *discordgo.Session, i *discordgo.Interacti
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		log.Errorf("Server status API returned status %d", resp.StatusCode)
 		Followup(s, i, "❌ Server status API is currently unavailable.")
 		return
@@ -51,6 +51,31 @@ func handleGameStatus(b *types.Bot, s *discordgo.Session, i *discordgo.Interacti
 	if err := json.NewDecoder(resp.Body).Decode(&statusResponse); err != nil {
 		log.Errorf("Failed to decode server status response: %v", err)
 		Followup(s, i, "❌ Failed to parse server status response.")
+		return
+	}
+
+	// Also check news endpoint for API health
+	newsResp, err := client.Get("https://api.arcgames.com/v1.0/games/sto/news?limit=1")
+	if err != nil {
+		log.Errorf("Failed to fetch news endpoint for health check: %v", err)
+		Followup(s, i, "❌ News API health check failed.")
+		return
+	}
+	defer newsResp.Body.Close()
+	if newsResp.StatusCode < 200 || newsResp.StatusCode >= 300 {
+		log.Errorf("News API health check returned status %d", newsResp.StatusCode)
+		Followup(s, i, "❌ News API is currently unavailable.")
+		return
+	}
+	var newsData map[string]interface{}
+	if err := json.NewDecoder(newsResp.Body).Decode(&newsData); err != nil {
+		log.Errorf("Failed to decode news API response: %v", err)
+		Followup(s, i, "❌ Failed to parse news API response.")
+		return
+	}
+	if _, ok := newsData["news"]; !ok {
+		log.Errorf("News API response missing 'news' key")
+		Followup(s, i, "❌ News API response invalid.")
 		return
 	}
 
